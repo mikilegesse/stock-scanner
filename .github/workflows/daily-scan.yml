@@ -1,6 +1,37 @@
-equity_backtester.py
-pipeline.py
-breakout_backtest.py
-app.py
-requirements.txt
-.github/workflows/daily-scan.yml
+name: Daily breakout scan
+
+on:
+  schedule:
+    # 22:30 UTC, Mon-Fri (after the US close). GitHub cron is UTC and does NOT
+    # shift for daylight saving, so the ET time drifts an hour twice a year.
+    # If EOD data looks stale, move this later (e.g. '0 1 * * 2-6').
+    - cron: "30 22 * * 1-5"
+  workflow_dispatch: {}   # adds a manual "Run workflow" button in the Actions tab
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run daily breakout scan
+        run: python pipeline.py
+        env:
+          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
+          DATA_API_KEY: ${{ secrets.DATA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ALERT_CHANNEL: ${{ secrets.ALERT_CHANNEL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          ALERT_TO: ${{ secrets.ALERT_TO }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
