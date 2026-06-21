@@ -392,32 +392,53 @@ def load_prices(tickers, start="2010-01-01", end=None) -> pd.DataFrame:
     return prices.dropna(how="all")
 
 
-def sp500_tickers() -> list[str]:
-    """Current S&P 500 constituents, scraped from Wikipedia.
+def _scrape_sp_index(url: str) -> list[str]:
+    """Scrape an S&P index constituent table from Wikipedia (free, unlimited).
 
-    NOTE: Wikipedia rejects requests without a real browser User-Agent (this is
-    why a bare pd.read_html(url) works locally but 403s on a cloud host). We
-    fetch with requests + a UA, then parse. For reliability prefer fmp_sp500()
-    if you have an FMP key -- it's a structured API, not a scrape.
+    Wikipedia rejects requests without a real browser User-Agent, so we fetch
+    with requests + a UA, then parse. Handles the column being named 'Symbol'
+    or 'Ticker symbol' across the 500/400/600 pages.
     """
     import io
     import requests
 
     html = requests.get(
-        "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+        url,
         headers={"User-Agent": "Mozilla/5.0 (compatible; stock-scanner/1.0)"},
         timeout=30,
     ).text
     tables = pd.read_html(io.StringIO(html))
+    df = tables[0]
+    col = next((c for c in df.columns
+                if str(c).strip().lower() in ("symbol", "ticker symbol", "ticker")), None)
+    if col is None:
+        raise RuntimeError(f"No ticker column found at {url} (got {list(df.columns)})")
     # yfinance uses '-' for share classes (BRK-B); Wikipedia uses '.' (BRK.B)
-    return tables[0]["Symbol"].str.replace(".", "-", regex=False).tolist()
+    return (df[col].astype(str).str.replace(".", "-", regex=False).str.strip()).tolist()
+
+
+def sp500_tickers() -> list[str]:
+    """S&P 500 (large cap) constituents. ~500 names, ~80% of US market cap."""
+    return _scrape_sp_index("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+
+
+def sp400_tickers() -> list[str]:
+    """S&P 400 (mid cap) constituents. ~400 names -- where movers often start."""
+    return _scrape_sp_index("https://en.wikipedia.org/wiki/List_of_S%26P_400_companies")
+
+
+def sp600_tickers() -> list[str]:
+    """S&P 600 (small cap) constituents. ~600 names -- the earliest breakouts."""
+    return _scrape_sp_index("https://en.wikipedia.org/wiki/List_of_S%26P_600_companies")
 
 
 # ----------------------------------------------------------------------
-# FMP-backed universes  (reliable; needs your FMP api_key)
+# FMP-backed universes  (optional; needs your FMP api_key)
+# NOTE: FMP deprecated its v3 routes and gates/limits these on the free tier.
+# Prefer the free Wikipedia index functions above. Kept here for reference.
 # ----------------------------------------------------------------------
 def fmp_sp500(api_key: str) -> list[str]:
-    """S&P 500 constituents straight from FMP's API (one call, no scraping)."""
+    """S&P 500 constituents from FMP's API (one call). May require a paid plan."""
     import requests
 
     url = "https://financialmodelingprep.com/api/v3/sp500_constituent"
@@ -429,15 +450,7 @@ def fmp_sp500(api_key: str) -> list[str]:
 
 def fmp_universe(api_key: str, min_market_cap: float = 2_000_000_000,
                  exchanges: str = "NASDAQ,NYSE,AMEX", limit: int = 3000) -> list[str]:
-    """A broad US equity universe from FMP's screener, filtered to stay sane.
-
-    This is how you scan BEYOND the S&P 500 -- into the mid/small caps where the
-    big breakouts (SanDisk, etc.) usually start before they're index-large.
-
-    min_market_cap : dollar floor. $2B (default) is a manageable few hundred-ish
-                     names; drop it to reach smaller caps, but every name you add
-                     is another price download -> slower, and heavy on free infra.
-    """
+    """Broad US universe from FMP's screener. May require a paid plan / hit limits."""
     import requests
 
     url = "https://financialmodelingprep.com/api/v3/stock-screener"
