@@ -393,19 +393,65 @@ def load_prices(tickers, start="2010-01-01", end=None) -> pd.DataFrame:
 
 
 def sp500_tickers() -> list[str]:
-    """Current S&P 500 constituents, scraped from Wikipedia (network required).
+    """Current S&P 500 constituents, scraped from Wikipedia.
 
-    For 'every US stock' you'd point this at a broader list (Russell 3000, full
-    listings), but be warned: yfinance gets slow and flaky past a few hundred
-    symbols. At full-market scale use batched downloads with retries, or a real
-    data vendor (Tiingo, Polygon, Nasdaq Data Link, EOD). The S&P 500 (~500
-    names) downloads fine in one shot and covers ~80% of US market cap.
+    NOTE: Wikipedia rejects requests without a real browser User-Agent (this is
+    why a bare pd.read_html(url) works locally but 403s on a cloud host). We
+    fetch with requests + a UA, then parse. For reliability prefer fmp_sp500()
+    if you have an FMP key -- it's a structured API, not a scrape.
     """
-    tables = pd.read_html(
-        "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    )
+    import io
+    import requests
+
+    html = requests.get(
+        "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+        headers={"User-Agent": "Mozilla/5.0 (compatible; stock-scanner/1.0)"},
+        timeout=30,
+    ).text
+    tables = pd.read_html(io.StringIO(html))
     # yfinance uses '-' for share classes (BRK-B); Wikipedia uses '.' (BRK.B)
     return tables[0]["Symbol"].str.replace(".", "-", regex=False).tolist()
+
+
+# ----------------------------------------------------------------------
+# FMP-backed universes  (reliable; needs your FMP api_key)
+# ----------------------------------------------------------------------
+def fmp_sp500(api_key: str) -> list[str]:
+    """S&P 500 constituents straight from FMP's API (one call, no scraping)."""
+    import requests
+
+    url = "https://financialmodelingprep.com/api/v3/sp500_constituent"
+    data = requests.get(url, params={"apikey": api_key}, timeout=30).json()
+    if not isinstance(data, list):
+        raise RuntimeError(f"FMP sp500 returned: {str(data)[:200]}")
+    return [d["symbol"].replace(".", "-") for d in data if d.get("symbol")]
+
+
+def fmp_universe(api_key: str, min_market_cap: float = 2_000_000_000,
+                 exchanges: str = "NASDAQ,NYSE,AMEX", limit: int = 3000) -> list[str]:
+    """A broad US equity universe from FMP's screener, filtered to stay sane.
+
+    This is how you scan BEYOND the S&P 500 -- into the mid/small caps where the
+    big breakouts (SanDisk, etc.) usually start before they're index-large.
+
+    min_market_cap : dollar floor. $2B (default) is a manageable few hundred-ish
+                     names; drop it to reach smaller caps, but every name you add
+                     is another price download -> slower, and heavy on free infra.
+    """
+    import requests
+
+    url = "https://financialmodelingprep.com/api/v3/stock-screener"
+    params = {
+        "marketCapMoreThan": int(min_market_cap),
+        "exchange": exchanges,
+        "isActivelyTrading": "true",
+        "limit": int(limit),
+        "apikey": api_key,
+    }
+    data = requests.get(url, params=params, timeout=60).json()
+    if not isinstance(data, list):
+        raise RuntimeError(f"FMP screener returned: {str(data)[:200]}")
+    return [d["symbol"].replace(".", "-") for d in data if d.get("symbol")]
 
 
 def plot_equity(curves: pd.DataFrame, log: bool = True, title: str = "Equity curves"):
