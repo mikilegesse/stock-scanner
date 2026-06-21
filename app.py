@@ -19,7 +19,7 @@ import streamlit as st
 
 from equity_backtester import (
     load_prices, screen_universe, breakout_scan,
-    sp500_tickers, fmp_sp500, fmp_universe,
+    sp500_tickers, sp400_tickers, sp600_tickers,
 )
 from pipeline import news_brief
 
@@ -42,17 +42,10 @@ def get_prices(tickers, start):
     return load_prices(list(tickers), start=start)
 
 
-@st.cache_data(ttl=86400, show_spinner="Fetching S&P 500 list...")
-def get_sp500(fmp_key):
-    # FMP if we have a key (reliable); otherwise fall back to the Wikipedia scrape.
-    if fmp_key:
-        return tuple(fmp_sp500(fmp_key))
-    return tuple(sp500_tickers())
-
-
-@st.cache_data(ttl=86400, show_spinner="Fetching broad universe...")
-def get_universe(fmp_key, min_cap_billions):
-    return tuple(fmp_universe(fmp_key, min_market_cap=min_cap_billions * 1e9))
+@st.cache_data(ttl=86400, show_spinner="Fetching index constituents...")
+def get_index(which):
+    return tuple({"sp500": sp500_tickers, "sp400": sp400_tickers,
+                  "sp600": sp600_tickers}[which]())
 
 
 @st.cache_data(ttl=900, show_spinner="Scanning the news...")
@@ -61,31 +54,26 @@ def get_brief(ticker, provider, model, news_key, openai_key):
                       model=model, openai_api_key=openai_key or None)
 
 
-# FMP key for the UNIVERSE (S&P 500 list + broad-market screener). Resolved up
-# front from secrets/env so it's available at startup. FMP_API_KEY preferred;
-# falls back to NEWS_API_KEY for backward compatibility.
-fmp_key = _secret("FMP_API_KEY") or _secret("NEWS_API_KEY")
-
 # ---------------- sidebar ----------------
 st.sidebar.header("Universe")
-mode = st.sidebar.radio("Source", ["Custom list", "S&P 500", "Broad market (FMP)"], index=0)
+mode = st.sidebar.radio(
+    "Source",
+    ["Custom list", "S&P 500 (large cap)", "S&P 400 (mid cap)", "S&P 600 (small cap)"],
+    index=0,
+)
 if mode == "Custom list":
     txt = st.sidebar.text_area(
         "Tickers", "NVDA MU SNDK AVGO SMCI MRVL AMD TSM ASML ANET WDC STX")
     tickers = tuple(t.strip().upper() for t in txt.replace(",", " ").split() if t.strip())
-elif mode == "S&P 500":
-    tickers = get_sp500(fmp_key)
-else:  # Broad market (FMP)
-    min_cap = st.sidebar.slider("Min market cap ($B)", 0.3, 50.0, 10.0, 0.5,
-                                help="Lower = reaches smaller caps, but many more "
-                                     "names to download = slower.")
-    if not fmp_key:
-        st.sidebar.error("Broad market needs your FMP key set in Streamlit secrets "
-                         "(see the deploy note).")
+else:
+    which = {"S&P 500 (large cap)": "sp500", "S&P 400 (mid cap)": "sp400",
+             "S&P 600 (small cap)": "sp600"}[mode]
+    try:
+        tickers = get_index(which)
+        st.sidebar.caption(f"{len(tickers)} names. First price load is slow; it caches after.")
+    except Exception as e:
+        st.sidebar.error(f"Couldn't load the index list: {e}. Use Custom list meanwhile.")
         tickers = ()
-    else:
-        tickers = get_universe(fmp_key, min_cap)
-        st.sidebar.caption(f"{len(tickers)} names above ${min_cap:.0f}B market cap.")
 start = st.sidebar.text_input("History start", "2024-01-01")
 
 st.sidebar.header("View")
@@ -94,9 +82,9 @@ near_high = st.sidebar.slider("Within % of 52w high (breakouts)", 0.0, 0.25, 0.0
 min_mom = st.sidebar.slider("Min 12-1 momentum (breakouts)", 0.0, 1.0, 0.30, 0.05)
 
 st.sidebar.header("News brief")
-provider = st.sidebar.selectbox("Provider", ["finnhub", "alphavantage", "fmp", "tiingo"])
-st.sidebar.caption("finnhub & alphavantage include news on their free tier. "
-                   "FMP news needs a paid plan.")
+provider = st.sidebar.selectbox("Provider", ["fmp", "finnhub", "alphavantage", "tiingo"])
+st.sidebar.caption("FMP news works on a paid plan. finnhub & alphavantage are "
+                   "free alternatives if you ever need one.")
 model = st.sidebar.text_input("LLM model", "gpt-4o-mini")
 # Default the news key to a provider-specific secret (e.g. FINNHUB_API_KEY) so
 # it persists; fall back to NEWS_API_KEY. You can always paste a key here too.
