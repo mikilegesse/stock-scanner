@@ -61,9 +61,10 @@ def get_brief(ticker, provider, model, news_key, openai_key):
                       model=model, openai_api_key=openai_key or None)
 
 
-# FMP key resolved up front (from Streamlit secrets / env) so it's available for
-# universe loading at startup. The sidebar can still override it.
-fmp_key = _secret("NEWS_API_KEY")
+# FMP key for the UNIVERSE (S&P 500 list + broad-market screener). Resolved up
+# front from secrets/env so it's available at startup. FMP_API_KEY preferred;
+# falls back to NEWS_API_KEY for backward compatibility.
+fmp_key = _secret("FMP_API_KEY") or _secret("NEWS_API_KEY")
 
 # ---------------- sidebar ----------------
 st.sidebar.header("Universe")
@@ -93,10 +94,15 @@ near_high = st.sidebar.slider("Within % of 52w high (breakouts)", 0.0, 0.25, 0.0
 min_mom = st.sidebar.slider("Min 12-1 momentum (breakouts)", 0.0, 1.0, 0.30, 0.05)
 
 st.sidebar.header("News brief")
-provider = st.sidebar.selectbox("Provider", ["fmp", "tiingo", "finnhub", "alphavantage"])
+provider = st.sidebar.selectbox("Provider", ["finnhub", "alphavantage", "fmp", "tiingo"])
+st.sidebar.caption("finnhub & alphavantage include news on their free tier. "
+                   "FMP news needs a paid plan.")
 model = st.sidebar.text_input("LLM model", "gpt-4o-mini")
-news_key = st.sidebar.text_input("News API key", fmp_key, type="password")
-openai_key = st.sidebar.text_input("OpenAI key", os.environ.get("OPENAI_API_KEY", ""), type="password")
+# Default the news key to a provider-specific secret (e.g. FINNHUB_API_KEY) so
+# it persists; fall back to NEWS_API_KEY. You can always paste a key here too.
+_default_news_key = _secret(f"{provider.upper()}_API_KEY") or _secret("NEWS_API_KEY")
+news_key = st.sidebar.text_input("News API key", _default_news_key, type="password")
+openai_key = st.sidebar.text_input("OpenAI key", _secret("OPENAI_API_KEY"), type="password")
 
 
 # ---------------- main ----------------
