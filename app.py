@@ -17,8 +17,21 @@ import os
 
 import streamlit as st
 
-from equity_backtester import load_prices, screen_universe, breakout_scan, sp500_tickers
+from equity_backtester import (
+    load_prices, screen_universe, breakout_scan,
+    sp500_tickers, fmp_sp500, fmp_universe,
+)
 from pipeline import news_brief
+
+
+def _secret(key, default=""):
+    """Resolve a key from Streamlit secrets first, then env vars."""
+    try:
+        if key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    return os.environ.get(key, default)
 
 st.set_page_config(page_title="Momentum screener", layout="wide")
 
@@ -30,8 +43,16 @@ def get_prices(tickers, start):
 
 
 @st.cache_data(ttl=86400, show_spinner="Fetching S&P 500 list...")
-def get_sp500():
+def get_sp500(fmp_key):
+    # FMP if we have a key (reliable); otherwise fall back to the Wikipedia scrape.
+    if fmp_key:
+        return tuple(fmp_sp500(fmp_key))
     return tuple(sp500_tickers())
+
+
+@st.cache_data(ttl=86400, show_spinner="Fetching broad universe...")
+def get_universe(fmp_key, min_cap_billions):
+    return tuple(fmp_universe(fmp_key, min_market_cap=min_cap_billions * 1e9))
 
 
 @st.cache_data(ttl=900, show_spinner="Scanning the news...")
@@ -40,15 +61,30 @@ def get_brief(ticker, provider, model, news_key, openai_key):
                       model=model, openai_api_key=openai_key or None)
 
 
+# FMP key resolved up front (from Streamlit secrets / env) so it's available for
+# universe loading at startup. The sidebar can still override it.
+fmp_key = _secret("NEWS_API_KEY")
+
 # ---------------- sidebar ----------------
 st.sidebar.header("Universe")
-mode = st.sidebar.radio("Source", ["Custom list", "S&P 500"], index=0)
+mode = st.sidebar.radio("Source", ["Custom list", "S&P 500", "Broad market (FMP)"], index=0)
 if mode == "Custom list":
     txt = st.sidebar.text_area(
         "Tickers", "NVDA MU SNDK AVGO SMCI MRVL AMD TSM ASML ANET WDC STX")
     tickers = tuple(t.strip().upper() for t in txt.replace(",", " ").split() if t.strip())
-else:
-    tickers = get_sp500()
+elif mode == "S&P 500":
+    tickers = get_sp500(fmp_key)
+else:  # Broad market (FMP)
+    min_cap = st.sidebar.slider("Min market cap ($B)", 0.3, 50.0, 10.0, 0.5,
+                                help="Lower = reaches smaller caps, but many more "
+                                     "names to download = slower.")
+    if not fmp_key:
+        st.sidebar.error("Broad market needs your FMP key set in Streamlit secrets "
+                         "(see the deploy note).")
+        tickers = ()
+    else:
+        tickers = get_universe(fmp_key, min_cap)
+        st.sidebar.caption(f"{len(tickers)} names above ${min_cap:.0f}B market cap.")
 start = st.sidebar.text_input("History start", "2024-01-01")
 
 st.sidebar.header("View")
@@ -59,7 +95,7 @@ min_mom = st.sidebar.slider("Min 12-1 momentum (breakouts)", 0.0, 1.0, 0.30, 0.0
 st.sidebar.header("News brief")
 provider = st.sidebar.selectbox("Provider", ["fmp", "tiingo", "finnhub", "alphavantage"])
 model = st.sidebar.text_input("LLM model", "gpt-4o-mini")
-news_key = st.sidebar.text_input("News API key", os.environ.get("NEWS_API_KEY", ""), type="password")
+news_key = st.sidebar.text_input("News API key", fmp_key, type="password")
 openai_key = st.sidebar.text_input("OpenAI key", os.environ.get("OPENAI_API_KEY", ""), type="password")
 
 
