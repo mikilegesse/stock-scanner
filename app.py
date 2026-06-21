@@ -44,6 +44,9 @@ def get_prices(tickers, start):
 
 @st.cache_data(ttl=86400, show_spinner="Fetching index constituents...")
 def get_index(which):
+    if which == "sp1500":
+        names = set(sp500_tickers()) | set(sp400_tickers()) | set(sp600_tickers())
+        return tuple(sorted(names))
     return tuple({"sp500": sp500_tickers, "sp400": sp400_tickers,
                   "sp600": sp600_tickers}[which]())
 
@@ -58,7 +61,8 @@ def get_brief(ticker, provider, model, news_key, openai_key):
 st.sidebar.header("Universe")
 mode = st.sidebar.radio(
     "Source",
-    ["Custom list", "S&P 500 (large cap)", "S&P 400 (mid cap)", "S&P 600 (small cap)"],
+    ["Custom list", "S&P 500 (large cap)", "S&P 400 (mid cap)",
+     "S&P 600 (small cap)", "All (S&P 1500)"],
     index=0,
 )
 if mode == "Custom list":
@@ -67,10 +71,14 @@ if mode == "Custom list":
     tickers = tuple(t.strip().upper() for t in txt.replace(",", " ").split() if t.strip())
 else:
     which = {"S&P 500 (large cap)": "sp500", "S&P 400 (mid cap)": "sp400",
-             "S&P 600 (small cap)": "sp600"}[mode]
+             "S&P 600 (small cap)": "sp600", "All (S&P 1500)": "sp1500"}[mode]
     try:
         tickers = get_index(which)
-        st.sidebar.caption(f"{len(tickers)} names. First price load is slow; it caches after.")
+        if which == "sp1500":
+            st.sidebar.caption(f"{len(tickers)} names (large+mid+small). First load "
+                               "takes a few minutes on the free tier, then caches.")
+        else:
+            st.sidebar.caption(f"{len(tickers)} names. First price load is slow; it caches after.")
     except Exception as e:
         st.sidebar.error(f"Couldn't load the index list: {e}. Use Custom list meanwhile.")
         tickers = ()
