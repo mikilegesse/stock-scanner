@@ -43,6 +43,25 @@ def fetch_news(ticker, provider="fmp", api_key=None, limit=10):
     """
     import requests
 
+    def _ensure_list(data, provider):
+        """Return data if it's a list of articles; else raise a readable error.
+
+        Vendors signal problems (paid-only endpoint, bad key, rate limit) by
+        returning a dict/string instead of a list -- which would otherwise blow
+        up as a cryptic slice error downstream.
+        """
+        if isinstance(data, list):
+            return data
+        msg = data
+        if isinstance(data, dict):
+            msg = (data.get("Error Message") or data.get("Information")
+                   or data.get("error") or data.get("message") or data)
+        raise RuntimeError(
+            f"{provider} returned no article list. API said: {str(msg)[:300]} "
+            f"| Note: FMP news requires a PAID plan. For free news switch the "
+            f"provider to 'finnhub' or 'alphavantage'."
+        )
+
     api_key = api_key or os.environ.get("NEWS_API_KEY") or os.environ.get("DATA_API_KEY")
     if not api_key:
         raise RuntimeError("No news API key. Set NEWS_API_KEY (or pass api_key).")
@@ -54,7 +73,7 @@ def fetch_news(ticker, provider="fmp", api_key=None, limit=10):
         url = "https://financialmodelingprep.com/api/v3/stock_news"
         params = {"tickers": ticker, "limit": limit, "apikey": api_key}
         data = requests.get(url, params=params, timeout=30).json()
-        for a in data[:limit]:
+        for a in _ensure_list(data, "fmp")[:limit]:
             out.append({
                 "title": a.get("title", ""),
                 "summary": a.get("text", "")[:600],
@@ -67,7 +86,7 @@ def fetch_news(ticker, provider="fmp", api_key=None, limit=10):
         url = "https://api.tiingo.com/tiingo/news"
         params = {"tickers": ticker.lower(), "limit": limit, "token": api_key}
         data = requests.get(url, params=params, timeout=30).json()
-        for a in data[:limit]:
+        for a in _ensure_list(data, "tiingo")[:limit]:
             out.append({
                 "title": a.get("title", ""),
                 "summary": a.get("description", "")[:600],
@@ -82,7 +101,7 @@ def fetch_news(ticker, provider="fmp", api_key=None, limit=10):
         url = "https://finnhub.io/api/v1/company-news"
         params = {"symbol": ticker, "from": frm, "to": today.isoformat(), "token": api_key}
         data = requests.get(url, params=params, timeout=30).json()
-        for a in data[:limit]:
+        for a in _ensure_list(data, "finnhub")[:limit]:
             out.append({
                 "title": a.get("headline", ""),
                 "summary": a.get("summary", "")[:600],
@@ -96,7 +115,10 @@ def fetch_news(ticker, provider="fmp", api_key=None, limit=10):
         params = {"function": "NEWS_SENTIMENT", "tickers": ticker, "apikey": api_key,
                   "limit": limit}
         data = requests.get(url, params=params, timeout=30).json()
-        for a in data.get("feed", [])[:limit]:
+        feed = data.get("feed") if isinstance(data, dict) else None
+        if feed is None:
+            _ensure_list(data, "alphavantage")  # raises with the API message
+        for a in (feed or [])[:limit]:
             out.append({
                 "title": a.get("title", ""),
                 "summary": a.get("summary", "")[:600],
