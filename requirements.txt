@@ -1,0 +1,6 @@
+pandas
+numpy
+yfinance
+requests
+openai>=1.0
+lxml
