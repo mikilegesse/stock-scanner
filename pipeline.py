@@ -70,16 +70,18 @@ def fetch_news(ticker, provider="fmp", api_key=None, limit=10):
     out = []
 
     if provider == "fmp":
-        url = "https://financialmodelingprep.com/api/v3/stock_news"
-        params = {"tickers": ticker, "limit": limit, "apikey": api_key}
+        # Stable endpoint. The old /api/v3/stock_news is a legacy route that FMP
+        # blocks for accounts created after Aug 2025.
+        url = "https://financialmodelingprep.com/stable/news/stock"
+        params = {"symbols": ticker, "limit": limit, "apikey": api_key}
         data = requests.get(url, params=params, timeout=30).json()
         for a in _ensure_list(data, "fmp")[:limit]:
             out.append({
                 "title": a.get("title", ""),
-                "summary": a.get("text", "")[:600],
+                "summary": (a.get("text") or a.get("snippet") or "")[:600],
                 "url": a.get("url", ""),
                 "date": a.get("publishedDate", ""),
-                "source": a.get("site", ""),
+                "source": a.get("site") or a.get("publisher", ""),
             })
 
     elif provider == "tiingo":
