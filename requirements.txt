@@ -4,3 +4,5 @@ yfinance
 requests
 openai>=1.0
 lxml
+streamlit
+streamlit-autorefresh
