@@ -38,7 +38,9 @@ st.set_page_config(page_title="Momentum screener", layout="wide")
 
 # ---------------- cached helpers (avoid re-downloading / re-billing) ----------
 @st.cache_data(ttl=3600, show_spinner="Loading prices...")
-def get_prices(tickers, start):
+def get_prices(tickers, start, refresh=0):
+    # `refresh` is part of the cache key: when the auto-refresh counter ticks up,
+    # this becomes a cache miss and re-downloads. Left at 0, normal caching applies.
     return load_prices(list(tickers), start=start)
 
 
@@ -84,6 +86,20 @@ else:
         tickers = ()
 start = st.sidebar.text_input("History start", "2024-01-01")
 
+st.sidebar.header("Auto-refresh")
+refresh_choice = st.sidebar.selectbox("Re-pull prices every", ["Off", "5 min", "10 min", "15 min"])
+refresh_count = 0
+if refresh_choice != "Off":
+    mins = int(refresh_choice.split()[0])
+    try:
+        from streamlit_autorefresh import st_autorefresh
+        refresh_count = st_autorefresh(interval=mins * 60_000, key="auto_refresh")
+        st.sidebar.caption(f"Live: re-pulling every {mins} min. Best on a custom "
+                           "watchlist or one index — the full 1500 is too slow to refresh.")
+    except ModuleNotFoundError:
+        st.sidebar.warning("Add `streamlit-autorefresh` to requirements.txt and redeploy "
+                           "to turn this on.")
+
 st.sidebar.header("View")
 view = st.sidebar.radio("Show", ["Full screen (who's rising)", "Breakouts only"])
 near_high = st.sidebar.slider("Within % of 52w high (breakouts)", 0.0, 0.25, 0.03, 0.01)
@@ -111,7 +127,7 @@ if not tickers:
     st.stop()
 
 try:
-    prices = get_prices(tickers, start)
+    prices = get_prices(tickers, start, refresh=refresh_count)
 except Exception as e:
     st.error(f"Couldn't load prices: {e}")
     st.stop()
